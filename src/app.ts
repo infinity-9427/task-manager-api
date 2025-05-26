@@ -10,7 +10,10 @@ export const createApp = ({ port }: { port: number | string }) => {
 
   app.use(
     cors({
-      origin: "https://task-manager-puce-one.vercel.app/",
+      origin: [
+        "https://task-manager-puce-one.vercel.app/",
+        /http:\/\/localhost:\d+$/,
+      ],
       methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
       allowedHeaders: ["Content-Type", "Authorization"],
     })
