@@ -8,16 +8,22 @@ const app = express();
 export const createApp = ({ port }: { port: number | string }) => {
   app.use(morgan("dev"));
 
-  app.use(
-    cors({
-      origin: [
-        "https://task-manager-puce-one.vercel.app/",
-        /http:\/\/localhost:\d+$/,
-      ],
-      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization"],
-    })
-  );
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      const allowedOrigins = [
+        "https://task-manager-puce-one.vercel.app",
+      ];
+      if (!origin || allowedOrigins.includes(origin) || /http:\/\/localhost:\d+$/.test(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" })); // URL-encoded parser
