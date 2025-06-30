@@ -1,13 +1,14 @@
 import express, { RequestHandler } from 'express';
 import { createTask, getAllTasks, getTaskById, updateTask, deleteTask } from '../controllers/tasks.js';
+import { requireAuth } from '../utils/auth.js';
 
 const taskRouter = express.Router();
 
-// Task routes
-taskRouter.post('/', createTask as RequestHandler);
-taskRouter.get('/', getAllTasks as RequestHandler);
-taskRouter.get('/:id', getTaskById as RequestHandler);
-taskRouter.put('/:id', updateTask as RequestHandler);
-taskRouter.delete('/:id', deleteTask as RequestHandler);
+// Task routes (all require authentication)
+taskRouter.post('/', requireAuth, createTask as RequestHandler);
+taskRouter.get('/', requireAuth, getAllTasks as RequestHandler);
+taskRouter.get('/:id', requireAuth, getTaskById as RequestHandler);
+taskRouter.put('/:id', requireAuth, updateTask as RequestHandler);
+taskRouter.delete('/:id', requireAuth, deleteTask as RequestHandler);
 
 export default taskRouter;

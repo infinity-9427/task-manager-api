@@ -7,23 +7,38 @@ const prisma = new PrismaClient();
 // Validation schemas
 const taskCreationSchema = Joi.object({
   title: Joi.string().required(),
-  description: Joi.string().required(),
-  status: Joi.string().valid('PENDING', 'IN_PROGRESS', 'COMPLETED').required(),
-  priority: Joi.string().valid('LOW', 'MEDIUM', 'HIGH', 'URGENT'),
-  userId: Joi.number().integer().required(),
+  description: Joi.string().optional(),
+  status: Joi.string().valid('PENDING', 'IN_PROGRESS', 'COMPLETED').optional(),
+  priority: Joi.string().valid('LOW', 'MEDIUM', 'HIGH', 'URGENT').optional(),
+  projectId: Joi.number().integer().optional(),
+  assignedToId: Joi.number().integer().optional(),
+  dueDate: Joi.date().iso().optional(),
+  estimatedHours: Joi.number().positive().optional(),
+  tags: Joi.array().items(Joi.string()).optional(),
 });
 
 const taskUpdateSchema = Joi.object({
   title: Joi.string().optional(),
   description: Joi.string().optional(),
   status: Joi.string().valid('PENDING', 'IN_PROGRESS', 'COMPLETED').optional(),
-  priority: Joi.string().valid('LOW', 'MEDIUM', 'HIGH', 'URGENT').allow(null).optional(), // Allow null
-  userId: Joi.number().integer().optional(),
+  priority: Joi.string().valid('LOW', 'MEDIUM', 'HIGH', 'URGENT').optional(),
+  projectId: Joi.number().integer().optional(),
+  assignedToId: Joi.number().integer().optional(),
+  dueDate: Joi.date().iso().optional(),
+  estimatedHours: Joi.number().positive().optional(),
+  tags: Joi.array().items(Joi.string()).optional(),
+  completionPercentage: Joi.number().min(0).max(100).optional(),
 });
 
 // CREATE
 export const createTask = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
+    // Check if user is authenticated
+    if (!req.user) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
     // Validate incoming data
     const { error, value } = taskCreationSchema.validate(req.body);
     if (error) {
@@ -31,9 +46,35 @@ export const createTask = async (req: Request, res: Response, next: NextFunction
       return;
     }
 
-    // Create task
-    const task = await prisma.task.create({ data: value });
-    res.json(task);
+    // Create task with the authenticated user as creator
+    const taskData = {
+      ...value,
+      createdById: req.user.id,
+    };
+
+    const task = await prisma.task.create({ 
+      data: taskData,
+      include: {
+        createdBy: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+          }
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+          }
+        },
+        project: true,
+      }
+    });
+    res.status(201).json(task);
   } catch (err) {
     next(err);
   }
