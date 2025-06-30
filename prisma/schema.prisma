@@ -1,9 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -13,18 +10,20 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        Int    @id @default(autoincrement())
-  username  String @unique
-  password  String
-  image     Json
-  tasks     Task[]
+// Enums
+enum UserRole {
+  ADMIN
+  MANAGER
+  MEMBER
 }
 
 enum TaskStatus {
   PENDING
   IN_PROGRESS
+  IN_REVIEW
   COMPLETED
+  CANCELLED
+  BLOCKED
 }
 
 enum Priority {
@@ -34,12 +33,375 @@ enum Priority {
   URGENT
 }
 
+enum ProjectStatus {
+  PLANNING
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+enum NotificationType {
+  TASK_ASSIGNED
+  TASK_DUE_SOON
+  TASK_OVERDUE
+  TASK_COMPLETED
+  TASK_COMMENTED
+  TASK_MENTIONED
+  MESSAGE_RECEIVED
+  GENERAL_NOTIFICATION
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  FILE
+  SYSTEM
+}
+
+enum ConversationType {
+  DIRECT
+  GROUP
+  GENERAL
+}
+
+// Models
+model User {
+  id                    Int       @id @default(autoincrement())
+  username              String    @unique
+  email                 String    @unique
+  password              String
+  firstName             String?   @map("first_name")
+  lastName              String?   @map("last_name")
+  avatar                Json?
+  role                  UserRole  @default(MEMBER)
+  isActive              Boolean   @default(true) @map("is_active")
+  isOnline              Boolean   @default(false) @map("is_online")
+  lastSeen              DateTime? @map("last_seen")
+  emailVerified         Boolean   @default(false) @map("email_verified")
+  emailVerificationToken String?  @map("email_verification_token")
+  passwordResetToken    String?   @map("password_reset_token")
+  passwordResetExpires  DateTime? @map("password_reset_expires")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  createdTasks          Task[]           @relation("TaskCreator")
+  assignedTasks         Task[]           @relation("TaskAssignee")
+  projects              Project[]
+  taskComments          TaskComment[]
+  notifications         Notification[]
+  sentMessages          Message[]        @relation("MessageSender")
+  conversationParticipants ConversationParticipant[]
+  taskWatchers          TaskWatcher[]
+  timeEntries           TimeEntry[]
+  activityLogs          ActivityLog[]
+  userSessions          UserSession[]
+  socketConnections     SocketConnection[]
+
+  @@map("users")
+}
+
+model Project {
+  id          Int           @id @default(autoincrement())
+  name        String
+  description String?
+  ownerId     Int           @map("owner_id")
+  status      ProjectStatus @default(ACTIVE)
+  priority    Priority      @default(MEDIUM)
+  startDate   DateTime?     @map("start_date")
+  endDate     DateTime?     @map("end_date")
+  color       String        @default("#3B82F6")
+  isPublic    Boolean       @default(false) @map("is_public")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  owner       User          @relation(fields: [ownerId], references: [id])
+  tasks       Task[]
+  timeEntries TimeEntry[]
+
+  @@map("projects")
+}
+
 model Task {
-  id          Int         @id @default(autoincrement())
-  title       String
-  description String
-  status      TaskStatus
-  priority    Priority?
-  user        User        @relation(fields: [userId], references: [id])
-  userId      Int
+  id                    Int         @id @default(autoincrement())
+  title                 String
+  description           String?
+  projectId             Int?        @map("project_id")
+  parentTaskId          Int?        @map("parent_task_id")
+  assignedToId          Int?        @map("assigned_to_id")
+  createdById           Int         @map("created_by_id")
+  status                TaskStatus  @default(PENDING)
+  priority              Priority    @default(MEDIUM)
+  dueDate               DateTime?   @map("due_date")
+  estimatedHours        Float?      @map("estimated_hours")
+  actualHours           Float       @default(0) @map("actual_hours")
+  completionPercentage  Int         @default(0) @map("completion_percentage")
+  tags                  String[]
+  labels                Json        @default("[]")
+  customFields          Json        @default("{}") @map("custom_fields")
+  position              Int?
+  isRecurring           Boolean     @default(false) @map("is_recurring")
+  recurringPattern      Json?       @map("recurring_pattern")
+  archivedAt            DateTime?   @map("archived_at")
+  completedAt           DateTime?   @map("completed_at")
+  createdAt             DateTime    @default(now()) @map("created_at")
+  updatedAt             DateTime    @updatedAt @map("updated_at")
+
+  // Relations
+  project               Project?    @relation(fields: [projectId], references: [id])
+  parentTask            Task?       @relation("TaskSubtasks", fields: [parentTaskId], references: [id])
+  subtasks              Task[]      @relation("TaskSubtasks")
+  assignedTo            User?       @relation("TaskAssignee", fields: [assignedToId], references: [id])
+  createdBy             User        @relation("TaskCreator", fields: [createdById], references: [id])
+  comments              TaskComment[]
+  watchers              TaskWatcher[]
+  attachments           Attachment[]
+  timeEntries           TimeEntry[]
+  activities            TaskActivity[]
+
+  @@map("tasks")
+}
+
+model TaskComment {
+  id              Int           @id @default(autoincrement())
+  taskId          Int           @map("task_id")
+  userId          Int           @map("user_id")
+  parentCommentId Int?          @map("parent_comment_id")
+  content         String
+  mentions        Int[]         @default([])
+  isEdited        Boolean       @default(false) @map("is_edited")
+  editedAt        DateTime?     @map("edited_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  task            Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user            User          @relation(fields: [userId], references: [id])
+  parentComment   TaskComment?  @relation("CommentReplies", fields: [parentCommentId], references: [id])
+  replies         TaskComment[] @relation("CommentReplies")
+
+  @@map("task_comments")
+}
+
+model TaskWatcher {
+  id        Int      @id @default(autoincrement())
+  taskId    Int      @map("task_id")
+  userId    Int      @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@unique([taskId, userId])
+  @@map("task_watchers")
+}
+
+model TaskActivity {
+  id           Int      @id @default(autoincrement())
+  taskId       Int      @map("task_id")
+  userId       Int?     @map("user_id")
+  activityType String   @map("activity_type")
+  description  String?
+  oldValue     Json?    @map("old_value")
+  newValue     Json?    @map("new_value")
+  metadata     Json     @default("{}") 
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  // Relations
+  task         Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@map("task_activities")
+}
+
+model Attachment {
+  id           Int      @id @default(autoincrement())
+  taskId       Int?     @map("task_id")
+  projectId    Int?     @map("project_id")
+  uploadedById Int?     @map("uploaded_by_id")
+  fileName     String   @map("file_name")
+  fileSize     BigInt?  @map("file_size")
+  fileType     String?  @map("file_type")
+  fileUrl      String   @map("file_url")
+  thumbnailUrl String?  @map("thumbnail_url")
+  isImage      Boolean  @default(false) @map("is_image")
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  // Relations
+  task         Task?    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@map("attachments")
+}
+
+model Conversation {
+  id              Int      @id @default(autoincrement())
+  type            ConversationType
+  name            String?
+  projectId       Int?     @map("project_id")
+  taskId          Int?     @map("task_id")
+  createdById     Int?     @map("created_by_id")
+  isActive        Boolean  @default(true) @map("is_active")
+  lastMessageAt   DateTime? @map("last_message_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  participants    ConversationParticipant[]
+  messages        Message[]
+
+  @@map("conversations")
+}
+
+model ConversationParticipant {
+  id             Int          @id @default(autoincrement())
+  conversationId Int          @map("conversation_id")
+  userId         Int          @map("user_id")
+  joinedAt       DateTime     @default(now()) @map("joined_at")
+  leftAt         DateTime?    @map("left_at")
+  muted          Boolean      @default(false)
+
+  // Relations
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id])
+
+  @@unique([conversationId, userId])
+  @@map("conversation_participants")
+}
+
+model Message {
+  id               Int          @id @default(autoincrement())
+  conversationId   Int          @map("conversation_id")
+  senderId         Int?         @map("sender_id")
+  parentMessageId  Int?         @map("parent_message_id")
+  content          String?
+  messageType      MessageType  @default(TEXT) @map("message_type")
+  attachments      Json         @default("[]")
+  mentions         Int[]        @default([])
+  reactions        Json         @default("{}")
+  isEdited         Boolean      @default(false) @map("is_edited")
+  editedAt         DateTime?    @map("edited_at")
+  isDeleted        Boolean      @default(false) @map("is_deleted")
+  deletedAt        DateTime?    @map("deleted_at")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  conversation     Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender           User?        @relation("MessageSender", fields: [senderId], references: [id])
+  parentMessage    Message?     @relation("MessageReplies", fields: [parentMessageId], references: [id])
+  replies          Message[]    @relation("MessageReplies")
+  readStatus       MessageReadStatus[]
+
+  @@map("messages")
+}
+
+model MessageReadStatus {
+  id        Int      @id @default(autoincrement())
+  messageId Int      @map("message_id")
+  userId    Int      @map("user_id")
+  readAt    DateTime @default(now()) @map("read_at")
+
+  // Relations
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@map("message_read_status")
+}
+
+model Notification {
+  id             Int              @id @default(autoincrement())
+  userId         Int              @map("user_id")
+  type           NotificationType
+  title          String
+  content        String?
+  data           Json             @default("{}")
+  entityType     String?          @map("entity_type")
+  entityId       Int?             @map("entity_id")
+  senderId       Int?             @map("sender_id")
+  isRead         Boolean          @default(false) @map("is_read")
+  readAt         DateTime?        @map("read_at")
+  priority       Priority         @default(MEDIUM)
+  scheduledFor   DateTime?        @map("scheduled_for")
+  sentAt         DateTime?        @map("sent_at")
+  createdAt      DateTime         @default(now()) @map("created_at")
+
+  // Relations
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model UserSession {
+  id            Int      @id @default(autoincrement())
+  userId        Int      @map("user_id")
+  refreshToken  String   @unique @map("refresh_token")
+  deviceInfo    Json     @default("{}") @map("device_info")
+  ipAddress     String?  @map("ip_address")
+  userAgent     String?  @map("user_agent")
+  isActive      Boolean  @default(true) @map("is_active")
+  expiresAt     DateTime @map("expires_at")
+  lastUsedAt    DateTime @default(now()) @map("last_used_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_sessions")
+}
+
+model SocketConnection {
+  id          Int      @id @default(autoincrement())
+  userId      Int      @map("user_id")
+  socketId    String   @unique @map("socket_id")
+  roomIds     String[] @default([]) @map("room_ids")
+  connectedAt DateTime @default(now()) @map("connected_at")
+  lastPing    DateTime @default(now()) @map("last_ping")
+
+  // Relations
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("socket_connections")
+}
+
+model TimeEntry {
+  id             Int      @id @default(autoincrement())
+  taskId         Int      @map("task_id")
+  userId         Int      @map("user_id")
+  projectId      Int?     @map("project_id")
+  description    String?
+  startTime      DateTime @map("start_time")
+  endTime        DateTime? @map("end_time")
+  durationMinutes Int?    @map("duration_minutes")
+  isBillable     Boolean  @default(false) @map("is_billable")
+  hourlyRate     Float?   @map("hourly_rate")
+  tags           String[] @default([])
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  task           Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user           User     @relation(fields: [userId], references: [id])
+  project        Project? @relation(fields: [projectId], references: [id])
+
+  @@map("time_entries")
+}
+
+model ActivityLog {
+  id         Int      @id @default(autoincrement())
+  userId     Int?     @map("user_id")
+  action     String
+  entityType String?  @map("entity_type")
+  entityId   Int?     @map("entity_id")
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent")
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user       User?    @relation(fields: [userId], references: [id])
+
+  @@map("activity_logs")
 }

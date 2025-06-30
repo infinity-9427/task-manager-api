@@ -9,7 +9,10 @@ const saltRounds = 10;
 
 const userSchema = Joi.object({
   username: Joi.string().trim().min(3).max(30).required(),
+  email: Joi.string().email().required(),
   password: Joi.string().min(6).required(),
+  firstName: Joi.string().trim().max(100).optional(),
+  lastName: Joi.string().trim().max(100).optional(),
   image: Joi.object({
     url: Joi.string().uri().optional(),
     public_id: Joi.string().optional()
@@ -44,12 +47,22 @@ export const createUser = async (req: Request, res: Response, next: NextFunction
       return;
     }
 
-    const { username, password: plainPassword } = value;
+    const { username, email, password: plainPassword, firstName, lastName } = value;
     const trimmedUsername = username.trim();
+    const trimmedEmail = email.trim().toLowerCase();
 
     // Check for username duplication before proceeding with expensive operations
     if (await isUsernameExisting(trimmedUsername)) {
       res.status(409).json({ error: 'Username already taken' });
+      return;
+    }
+
+    // Check for email duplication
+    const existingEmail = await prisma.user.findUnique({
+      where: { email: trimmedEmail }
+    });
+    if (existingEmail) {
+      res.status(409).json({ error: 'Email already registered' });
       return;
     }
 
@@ -69,8 +82,11 @@ export const createUser = async (req: Request, res: Response, next: NextFunction
     const user = await prisma.user.create({
       data: {
         username: trimmedUsername.toLowerCase(), // Store username in lowercase for consistency
+        email: trimmedEmail,
         password: hashedPassword,
-        image: finalImagePayload
+        firstName,
+        lastName,
+        avatar: finalImagePayload
       }
     });
     const { password, ...userWithoutPassword } = user;
@@ -145,7 +161,7 @@ export const updateUser = async (req: Request, res: Response, next: NextFunction
     }
 
     // Handle image update if provided
-    const currentImage = currentUser.image as ({ public_id?: string } | null);
+    const currentImage = currentUser.avatar as ({ public_id?: string } | null);
     const oldPublicId = currentImage?.public_id || null;
 
     if (req.files?.image) { 
@@ -207,13 +223,18 @@ export const deleteUser = async (req: Request, res: Response, next: NextFunction
       return;
     }
 
-    const imageToDelete = userToDelete.image as ({ public_id?: string } | null);
+    const imageToDelete = userToDelete.avatar as ({ public_id?: string } | null);
     if (imageToDelete?.public_id) {
       await deleteImage(imageToDelete.public_id);
     }
 
     await prisma.task.deleteMany({
-      where: { userId: id },
+      where: { 
+        OR: [
+          { assignedToId: id },
+          { createdById: id }
+        ]
+      },
     });
 
     await prisma.user.delete({ where: { id } });

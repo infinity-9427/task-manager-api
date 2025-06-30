@@ -6,7 +6,10 @@ const prisma = new PrismaClient();
 const saltRounds = 10;
 const userSchema = Joi.object({
     username: Joi.string().trim().min(3).max(30).required(),
+    email: Joi.string().email().required(),
     password: Joi.string().min(6).required(),
+    firstName: Joi.string().trim().max(100).optional(),
+    lastName: Joi.string().trim().max(100).optional(),
     image: Joi.object({
         url: Joi.string().uri().optional(),
         public_id: Joi.string().optional()
@@ -36,11 +39,20 @@ export const createUser = async (req, res, next) => {
             res.status(400).json({ error: error.details[0].message });
             return;
         }
-        const { username, password: plainPassword } = value;
+        const { username, email, password: plainPassword, firstName, lastName } = value;
         const trimmedUsername = username.trim();
+        const trimmedEmail = email.trim().toLowerCase();
         // Check for username duplication before proceeding with expensive operations
         if (await isUsernameExisting(trimmedUsername)) {
             res.status(409).json({ error: 'Username already taken' });
+            return;
+        }
+        // Check for email duplication
+        const existingEmail = await prisma.user.findUnique({
+            where: { email: trimmedEmail }
+        });
+        if (existingEmail) {
+            res.status(409).json({ error: 'Email already registered' });
             return;
         }
         // Process image if provided
@@ -57,8 +69,11 @@ export const createUser = async (req, res, next) => {
         const user = await prisma.user.create({
             data: {
                 username: trimmedUsername.toLowerCase(), // Store username in lowercase for consistency
+                email: trimmedEmail,
                 password: hashedPassword,
-                image: finalImagePayload
+                firstName,
+                lastName,
+                avatar: finalImagePayload
             }
         });
         const { password, ...userWithoutPassword } = user;
@@ -125,7 +140,7 @@ export const updateUser = async (req, res, next) => {
             }
         }
         // Handle image update if provided
-        const currentImage = currentUser.image;
+        const currentImage = currentUser.avatar;
         const oldPublicId = currentImage?.public_id || null;
         if (req.files?.image) {
             if (oldPublicId) {
@@ -183,12 +198,17 @@ export const deleteUser = async (req, res, next) => {
             res.status(404).json({ error: 'User not found' });
             return;
         }
-        const imageToDelete = userToDelete.image;
+        const imageToDelete = userToDelete.avatar;
         if (imageToDelete?.public_id) {
             await deleteImage(imageToDelete.public_id);
         }
         await prisma.task.deleteMany({
-            where: { userId: id },
+            where: {
+                OR: [
+                    { assignedToId: id },
+                    { createdById: id }
+                ]
+            },
         });
         await prisma.user.delete({ where: { id } });
         res.status(200).json({ message: 'User and associated tasks deleted successfully' });

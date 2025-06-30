@@ -1,13 +1,17 @@
 import express from 'express';
-import { loginHandler } from '../controllers/auth.js';
-// If you move refreshTokenHandler and logoutHandler to auth.controller.ts, import them here too.
-// import { refreshTokenHandler, logoutHandler } from '../controllers/auth.js';
-// For now, assuming they might still be in utils/auth.ts or will be moved later:
-import { refreshTokenHandler, logoutHandler } from '../utils/auth.js';
+import { loginHandler, refreshTokenHandler, logoutHandler } from '../utils/auth.js';
+import { register, getCurrentUser, changePassword, forgotPassword, resetPassword } from '../controllers/auth.js';
+import { requireAuth } from '../utils/auth.js';
 const authRouter = express.Router();
-// Auth routes
+// Public routes
+authRouter.post('/register', register);
 authRouter.post('/login', loginHandler);
 authRouter.post('/refresh-token', refreshTokenHandler);
-authRouter.post('/logout', logoutHandler); // Assuming you want a logout route
+authRouter.post('/forgot-password', forgotPassword);
+authRouter.post('/reset-password', resetPassword);
+// Protected routes
+authRouter.get('/me', requireAuth, getCurrentUser);
+authRouter.post('/change-password', requireAuth, changePassword);
+authRouter.post('/logout', requireAuth, logoutHandler);
 export default authRouter;
 //# sourceMappingURL=auth.js.map

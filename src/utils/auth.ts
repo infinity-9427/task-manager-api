@@ -2,8 +2,111 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
+import passport from 'passport';
+import { Strategy as LocalStrategy } from 'passport-local';
+import { Strategy as JwtStrategy, ExtractJwt } from 'passport-jwt';
 
 const prisma = new PrismaClient();
+
+// --- Passport Configuration ---
+// Local Strategy for username/password authentication
+passport.use(new LocalStrategy(
+  {
+    usernameField: 'username', // Can be username or email
+    passwordField: 'password'
+  },
+  async (username: string, password: string, done) => {
+    try {
+      const loginIdentifier = username.trim().toLowerCase();
+      
+      // Try to find user by email first, then by username
+      const user = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { email: loginIdentifier },
+            { username: loginIdentifier }
+          ]
+        }
+      });
+
+      if (!user) {
+        return done(null, false, { message: 'Invalid credentials' });
+      }
+
+      if (!user.isActive) {
+        return done(null, false, { message: 'Account is deactivated' });
+      }
+
+      const isValidPassword = await bcrypt.compare(password, user.password);
+      if (!isValidPassword) {
+        return done(null, false, { message: 'Invalid credentials' });
+      }
+
+      return done(null, user);
+    } catch (error) {
+      return done(error);
+    }
+  }
+));
+
+// JWT Strategy for token-based authentication
+passport.use(new JwtStrategy(
+  {
+    jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+    secretOrKey: process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production'
+  },
+  async (payload, done) => {
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: payload.userId },
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          role: true,
+          isActive: true,
+          avatar: true
+        }
+      });
+
+      if (!user || !user.isActive) {
+        return done(null, false);
+      }
+
+      return done(null, user);
+    } catch (error) {
+      return done(error, false);
+    }
+  }
+));
+
+// Passport serialization (for session-based auth if needed)
+passport.serializeUser((user: any, done) => {
+  done(null, user.id);
+});
+
+passport.deserializeUser(async (id: number, done) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        isActive: true,
+        avatar: true
+      }
+    });
+    done(null, user);
+  } catch (error) {
+    done(error, null);
+  }
+});
 
 // --- Environment Variables ---
 // Ensure these are set in your .env file for security and configurability.
@@ -12,8 +115,8 @@ const prisma = new PrismaClient();
 // REFRESH_TOKEN_SECRET: A strong, random string for signing refresh tokens (must be different from access token secret).
 // ACCESS_TOKEN_EXPIRATION: How long access tokens are valid (e.g., '15m', '1h').
 // REFRESH_TOKEN_EXPIRATION: How long refresh tokens are valid (e.g., '7d', '30d').
-const ACCESS_TOKEN_SECRET = process.env.ACCESS_TOKEN_SECRET || 'your-default-unsafe-access-token-secret';
-const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET || 'your-default-unsafe-refresh-token-secret';
+const ACCESS_TOKEN_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production';
+const REFRESH_TOKEN_SECRET = process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key-change-this-in-production';
 const ACCESS_TOKEN_EXPIRATION = process.env.ACCESS_TOKEN_EXPIRATION || '15m';
 const REFRESH_TOKEN_EXPIRATION = process.env.REFRESH_TOKEN_EXPIRATION || '7d';
 
@@ -96,11 +199,18 @@ export const verifyToken = async (token: string, secret: string): Promise<jwt.Jw
 };
 
 // --- Express Request User Augmentation ---
-// This allows us to attach user information to the request object in authenticated routes.
+// Note: User type already defined by Passport, extending it
 declare global {
   namespace Express {
-    interface Request {
-      user?: { userId: number };
+    interface User {
+      id: number;
+      username: string;
+      email: string;
+      firstName?: string;
+      lastName?: string;
+      role: string;
+      isActive: boolean;
+      avatar?: any;
     }
   }
 }
@@ -123,38 +233,92 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
   }
 
   // Optional: Check if user still exists in DB, though this adds DB lookup per request.
-  // const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
-  // if (!user) {
-  //   res.status(403).json({ error: 'User not found for token' });
-  //   return;
-  // }
+  const user = await prisma.user.findUnique({ 
+    where: { id: decoded.userId },
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      firstName: true,
+      lastName: true,
+      role: true,
+      isActive: true,
+      avatar: true
+    }
+  });
+  if (!user || !user.isActive) {
+    res.status(403).json({ error: 'User not found or inactive' });
+    return;
+  }
 
-  req.user = { userId: decoded.userId };
+  req.user = user;
   next();
+};
+
+// --- Authorization Middleware ---
+export const requireAuth = passport.authenticate('jwt', { session: false });
+
+export const requireRole = (roles: string[]) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Insufficient permissions' });
+    }
+
+    next();
+  };
+};
+
+export const requireAdminOrOwner = (userIdField: string = 'userId') => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const isAdmin = req.user.role === 'ADMIN';
+    const isOwner = req.user.id === parseInt(req.params[userIdField]) || 
+                    req.user.id === parseInt(req.body[userIdField]);
+
+    if (!isAdmin && !isOwner) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    next();
+  };
 };
 
 // --- Route Handlers ---
 
 /**
  * Handles user login.
- * Expects 'username' and 'password' in the request body.
+ * Expects 'username' (can be username or email) and 'password' in the request body.
  * Returns access token and refresh token upon successful authentication.
  */
 export const loginHandler = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    // TODO: Add input validation (e.g., using Joi)
     const { username, password } = req.body;
 
     if (!username || !password) {
-      res.status(400).json({ error: 'Username and password are required' });
+      res.status(400).json({ error: 'Username/email and password are required' });
       return;
     }
 
-    const user = await prisma.user.findUnique({
-      where: { username: username.trim().toLowerCase() },
+    const loginIdentifier = username.trim().toLowerCase();
+
+    // Try to find user by email first, then by username
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: loginIdentifier },
+          { username: loginIdentifier }
+        ]
+      }
     });
 
-    if (!user) {
+    if (!user || !user.isActive) {
       res.status(401).json({ error: 'Invalid credentials' }); // Generic error for security
       return;
     }
@@ -165,12 +329,24 @@ export const loginHandler = async (req: Request, res: Response, next: NextFuncti
       return;
     }
 
+    // Update last seen
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { lastSeen: new Date() }
+    });
+
     const accessToken = signAccessToken(user.id);
     const refreshToken = signRefreshToken(user.id);
 
-    // Best practice: Store refresh token in an HTTP-only cookie for web clients.
-    // For this example, returning it in the JSON response.
-    res.json({ accessToken, refreshToken });
+    // Return user info along with tokens (excluding password)
+    const { password: _, ...userWithoutPassword } = user;
+
+    res.json({ 
+      message: 'Login successful',
+      user: userWithoutPassword,
+      accessToken, 
+      refreshToken 
+    });
   } catch (error) {
     next(error);
   }

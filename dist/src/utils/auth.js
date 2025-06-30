@@ -1,7 +1,89 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { PrismaClient } from '@prisma/client';
+import passport from 'passport';
+import { Strategy as LocalStrategy } from 'passport-local';
+import { Strategy as JwtStrategy, ExtractJwt } from 'passport-jwt';
 const prisma = new PrismaClient();
+// --- Passport Configuration ---
+// Local Strategy for username/password authentication
+passport.use(new LocalStrategy({
+    usernameField: 'email',
+    passwordField: 'password'
+}, async (email, password, done) => {
+    try {
+        const user = await prisma.user.findUnique({
+            where: { email: email.toLowerCase() }
+        });
+        if (!user) {
+            return done(null, false, { message: 'Invalid email or password' });
+        }
+        if (!user.isActive) {
+            return done(null, false, { message: 'Account is deactivated' });
+        }
+        const isValidPassword = await bcrypt.compare(password, user.password);
+        if (!isValidPassword) {
+            return done(null, false, { message: 'Invalid email or password' });
+        }
+        return done(null, user);
+    }
+    catch (error) {
+        return done(error);
+    }
+}));
+// JWT Strategy for token-based authentication
+passport.use(new JwtStrategy({
+    jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+    secretOrKey: process.env.JWT_SECRET || 'your-jwt-secret'
+}, async (payload, done) => {
+    try {
+        const user = await prisma.user.findUnique({
+            where: { id: payload.userId },
+            select: {
+                id: true,
+                username: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                role: true,
+                isActive: true,
+                avatar: true
+            }
+        });
+        if (!user || !user.isActive) {
+            return done(null, false);
+        }
+        return done(null, user);
+    }
+    catch (error) {
+        return done(error, false);
+    }
+}));
+// Passport serialization (for session-based auth if needed)
+passport.serializeUser((user, done) => {
+    done(null, user.id);
+});
+passport.deserializeUser(async (id, done) => {
+    try {
+        const user = await prisma.user.findUnique({
+            where: { id },
+            select: {
+                id: true,
+                username: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                role: true,
+                isActive: true,
+                avatar: true
+            }
+        });
+        done(null, user);
+    }
+    catch (error) {
+        done(error, null);
+    }
+});
 // --- Environment Variables ---
 // Ensure these are set in your .env file for security and configurability.
 //
@@ -90,13 +172,52 @@ export const authenticateToken = async (req, res, next) => {
         return;
     }
     // Optional: Check if user still exists in DB, though this adds DB lookup per request.
-    // const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
-    // if (!user) {
-    //   res.status(403).json({ error: 'User not found for token' });
-    //   return;
-    // }
-    req.user = { userId: decoded.userId };
+    const user = await prisma.user.findUnique({
+        where: { id: decoded.userId },
+        select: {
+            id: true,
+            username: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+            role: true,
+            isActive: true,
+            avatar: true
+        }
+    });
+    if (!user || !user.isActive) {
+        res.status(403).json({ error: 'User not found or inactive' });
+        return;
+    }
+    req.user = user;
     next();
+};
+// --- Authorization Middleware ---
+export const requireAuth = passport.authenticate('jwt', { session: false });
+export const requireRole = (roles) => {
+    return (req, res, next) => {
+        if (!req.user) {
+            return res.status(401).json({ error: 'Authentication required' });
+        }
+        if (!roles.includes(req.user.role)) {
+            return res.status(403).json({ error: 'Insufficient permissions' });
+        }
+        next();
+    };
+};
+export const requireAdminOrOwner = (userIdField = 'userId') => {
+    return (req, res, next) => {
+        if (!req.user) {
+            return res.status(401).json({ error: 'Authentication required' });
+        }
+        const isAdmin = req.user.role === 'ADMIN';
+        const isOwner = req.user.id === parseInt(req.params[userIdField]) ||
+            req.user.id === parseInt(req.body[userIdField]);
+        if (!isAdmin && !isOwner) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+        next();
+    };
 };
 // --- Route Handlers ---
 /**

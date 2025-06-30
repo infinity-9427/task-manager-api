@@ -92,22 +92,22 @@ export const updateTask = async (req: Request, res: Response, next: NextFunction
       return;
     }
 
-    // If userId is provided in the update payload, check if the new user exists
+    // If assignedToId is provided in the update payload, check if the new user exists
     // This assumes you have a User model and prisma.user accessor
-    if (value.userId !== undefined && value.userId !== null) {
+    if (value.assignedToId !== undefined && value.assignedToId !== null) {
       // Check if the user is actually being changed to a new one or set
-      if (existingTask.userId !== value.userId) {
-        const userExists = await prisma.user.findUnique({ where: { id: value.userId } });
+      if (existingTask.assignedToId !== value.assignedToId) {
+        const userExists = await prisma.user.findUnique({ where: { id: value.assignedToId } });
         if (!userExists) {
-          res.status(400).json({ error: `User with ID ${value.userId} not found. Cannot reassign task.` });
+          res.status(400).json({ error: `User with ID ${value.assignedToId} not found. Cannot reassign task.` });
           return;
         }
       }
-    } else if (value.hasOwnProperty('userId') && value.userId === null) {
-        // If userId is explicitly set to null (if your schema allows it, e.g. for unassigning)
-        // Ensure your database schema for Task.userId allows NULL.
-        // If userId is non-nullable in DB, Prisma will error.
-        // This example assumes userId can be set to null if desired.
+    } else if (value.hasOwnProperty('assignedToId') && value.assignedToId === null) {
+        // If assignedToId is explicitly set to null (if your schema allows it, e.g. for unassigning)
+        // Ensure your database schema for Task.assignedToId allows NULL.
+        // If assignedToId is non-nullable in DB, Prisma will error.
+        // This example assumes assignedToId can be set to null if desired.
         // If userId is mandatory, this else if block might not be needed or handled differently.
     }
 
