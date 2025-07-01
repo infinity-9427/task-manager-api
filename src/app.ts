@@ -160,6 +160,7 @@ export const createApp = ({ port }: { port: number | string }) => {
           projectAnalytics: "GET /api/analytics/project/{id}"
         },
         users: {
+          getAll: "GET /api/users",
           getById: "GET /api/users/{id}",
           create: "POST /api/users",
           update: "PUT /api/users/{id}",
