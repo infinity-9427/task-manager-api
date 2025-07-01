@@ -9,6 +9,8 @@ import session from "express-session";
 import passport from "passport";
 import { Server } from "socket.io";
 import { createServer } from "http";
+import swaggerUi from "swagger-ui-express";
+import { swaggerSpec } from "./config/swagger.js";
 
 // Routes
 import authRoutes from "./routes/auth.js";
@@ -104,6 +106,103 @@ export const createApp = ({ port }: { port: number | string }) => {
       uptime: process.uptime(),
     });
   });
+
+  // API documentation endpoint
+  app.get("/api", (req, res) => {
+    res.status(200).json({
+      name: "Task Manager API",
+      version: "1.0.0",
+      description: "A comprehensive task management API with real-time features",
+      baseUrl: `${req.protocol}://${req.get('host')}/api`,
+      documentation: {
+        swagger: `${req.protocol}://${req.get('host')}/api-docs`,
+        openapi: `${req.protocol}://${req.get('host')}/api/swagger.json`,
+        markdown: "Full API documentation available in API_DOCUMENTATION.md"
+      },
+      endpoints: {
+        authentication: {
+          register: "POST /api/auth/register",
+          login: "POST /api/auth/login",
+          me: "GET /api/auth/me",
+          refreshToken: "POST /api/auth/refresh-token",
+          changePassword: "POST /api/auth/change-password",
+          forgotPassword: "POST /api/auth/forgot-password",
+          resetPassword: "POST /api/auth/reset-password",
+          logout: "POST /api/auth/logout"
+        },
+        tasks: {
+          create: "POST /api/tasks",
+          getAll: "GET /api/tasks",
+          getById: "GET /api/tasks/{id}",
+          update: "PUT /api/tasks/{id}",
+          delete: "DELETE /api/tasks/{id}"
+        },
+        messaging: {
+          createConversation: "POST /api/messaging/conversations",
+          getConversations: "GET /api/messaging/conversations",
+          sendMessage: "POST /api/messaging/conversations/{id}/messages",
+          getMessages: "GET /api/messaging/conversations/{id}/messages",
+          addParticipants: "POST /api/messaging/conversations/{id}/participants",
+          leaveConversation: "DELETE /api/messaging/conversations/{id}/leave"
+        },
+        notifications: {
+          getNotifications: "GET /api/notifications",
+          markAsRead: "PATCH /api/notifications/{id}/read",
+          markAllAsRead: "PATCH /api/notifications/mark-all-read",
+          deleteNotification: "DELETE /api/notifications/{id}",
+          getPreferences: "GET /api/notifications/preferences",
+          updatePreferences: "PUT /api/notifications/preferences",
+          createSystemNotification: "POST /api/notifications/system"
+        },
+        analytics: {
+          dashboard: "GET /api/analytics/dashboard",
+          adminDashboard: "GET /api/analytics/admin-dashboard",
+          projectAnalytics: "GET /api/analytics/project/{id}"
+        },
+        users: {
+          getById: "GET /api/users/{id}",
+          create: "POST /api/users",
+          update: "PUT /api/users/{id}",
+          delete: "DELETE /api/users/{id}"
+        }
+      },
+      features: [
+        "JWT Authentication",
+        "Real-time messaging with Socket.IO",
+        "Task management with priorities and status tracking",
+        "User notifications and preferences",
+        "Analytics and dashboard",
+        "File uploads with Cloudinary",
+        "Rate limiting and security headers",
+        "PostgreSQL with Prisma ORM"
+      ],
+      socketIO: {
+        endpoint: `${req.protocol}://${req.get('host')}`,
+        events: {
+          client: ["join_conversation", "leave_conversation", "send_message", "typing_start", "typing_stop"],
+          server: ["message_received", "notification_received", "user_status_changed", "typing_indicator", "task_updated", "conversation_updated"]
+        }
+      },
+      rateLimit: "100 requests per 15 minutes per IP",
+      cors: "Configured for cross-origin requests"
+    });
+  });
+
+  // Swagger JSON endpoint
+  app.get("/api/swagger.json", (req, res) => {
+    res.setHeader("Content-Type", "application/json");
+    res.send(swaggerSpec);
+  });
+
+  // Swagger UI
+  app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+    explorer: true,
+    customCss: '.swagger-ui .topbar { display: none }',
+    customSiteTitle: "Task Manager API Documentation",
+    swaggerOptions: {
+      persistAuthorization: true,
+    },
+  }));
 
   // API routes
   app.use("/api/auth", authRoutes);
