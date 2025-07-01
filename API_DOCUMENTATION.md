@@ -626,6 +626,48 @@ Authorization: Bearer <your_jwt_token>
 
 ## 👥 User Management Endpoints
 
+### Get All Users
+**GET** `/users`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Query Parameters:**
+- `page` (integer, optional): Page number for pagination (default: 1)
+- `limit` (integer, optional): Number of users per page (default: 20)
+- `search` (string, optional): Search term for username, email, firstName, or lastName
+- `role` (string, optional): Filter by user role (`MEMBER`, `ADMIN`, `MODERATOR`)
+- `isActive` (boolean, optional): Filter by active status
+
+**Response (200):**
+```json
+{
+  "users": [
+    {
+      "id": 1,
+      "username": "testuser",
+      "email": "test@example.com",
+      "firstName": "Test",
+      "lastName": "User",
+      "avatar": null,
+      "role": "MEMBER",
+      "isActive": true,
+      "isOnline": false,
+      "lastSeen": "2025-06-30T15:21:14.082Z",
+      "emailVerified": false,
+      "createdAt": "2025-06-30T15:11:56.828Z",
+      "updatedAt": "2025-06-30T15:21:14.083Z"
+    }
+  ],
+  "pagination": {
+    "currentPage": 1,
+    "totalPages": 1,
+    "totalCount": 1,
+    "hasNextPage": false,
+    "hasPrevPage": false
+  }
+}
+```
+
 ### Get User by ID
 **GET** `/users/{id}`
 

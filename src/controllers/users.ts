@@ -2,15 +2,124 @@ import { Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
 import Joi from 'joi';
 import bcrypt from 'bcrypt'; 
-import { uploadImage, deleteImage } from '../helpers/imageUploader.js'; 
+import { uploadImage, deleteImage } from '../helpers/imageUploader.js';
+import { excludePassword, validatePasswordStrength } from '../utils/passwordSecurity.js';
 
 const prisma = new PrismaClient();
-const saltRounds = 10; 
+const saltRounds = 12; // Increased for better security, consistent with auth controller 
 
-const userSchema = Joi.object({
+// Get all users with pagination and filtering
+export const getAllUsers = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const search = req.query.search as string;
+    const role = req.query.role as string;
+    const isActive = req.query.isActive;
+    const skip = (page - 1) * limit;
+
+    // Build where clause for filtering
+    const whereClause: any = {};
+
+    if (search) {
+      whereClause.OR = [
+        { username: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        { firstName: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } }
+      ];
+    }
+
+    if (role) {
+      whereClause.role = role;
+    }
+
+    if (isActive !== undefined) {
+      whereClause.isActive = isActive === 'true';
+    }
+
+    // Get users with pagination
+    const [users, totalCount] = await Promise.all([
+      prisma.user.findMany({
+        where: whereClause,
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          avatar: true,
+          role: true,
+          isActive: true,
+          isOnline: true,
+          lastSeen: true,
+          emailVerified: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.user.count({ where: whereClause })
+    ]);
+
+    const totalPages = Math.ceil(totalCount / limit);
+
+    res.json({
+      users,
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalCount,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// Custom password validation function
+const passwordValidation = (value: string, helpers: any) => {
+  const { isValid, errors } = validatePasswordStrength(value);
+  if (!isValid) {
+    return helpers.error('any.custom', { errors });
+  }
+  return value;
+};
+
+// Schema for creating a new user (password required)
+const createUserSchema = Joi.object({
   username: Joi.string().trim().min(3).max(30).required(),
   email: Joi.string().email().required(),
-  password: Joi.string().min(6).required(),
+  password: Joi.string()
+    .min(6)
+    .required()
+    .custom(passwordValidation)
+    .messages({
+      'any.custom': 'Password validation failed: {{#errors}}'
+    }),
+  firstName: Joi.string().trim().max(100).optional(),
+  lastName: Joi.string().trim().max(100).optional(),
+  image: Joi.object({
+    url: Joi.string().uri().optional(),
+    public_id: Joi.string().optional()
+  }).optional()
+});
+
+// Schema for updating a user (all fields optional except constraints)
+const updateUserSchema = Joi.object({
+  username: Joi.string().trim().min(3).max(30).optional(),
+  email: Joi.string().email().optional(),
+  password: Joi.string()
+    .min(6)
+    .optional()
+    .custom(passwordValidation)
+    .messages({
+      'any.custom': 'Password validation failed: {{#errors}}'
+    }),
   firstName: Joi.string().trim().max(100).optional(),
   lastName: Joi.string().trim().max(100).optional(),
   image: Joi.object({
@@ -41,7 +150,7 @@ const isUsernameExisting = async (username: string, excludeUserId?: number): Pro
 // Create user
 export const createUser = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { error, value } = userSchema.validate(req.body);
+    const { error, value } = createUserSchema.validate(req.body);
     if (error) {
       res.status(400).json({ error: error.details[0].message });
       return;
@@ -89,7 +198,7 @@ export const createUser = async (req: Request, res: Response, next: NextFunction
         avatar: finalImagePayload
       }
     });
-    const { password, ...userWithoutPassword } = user;
+    const userWithoutPassword = excludePassword(user);
     res.status(201).json({ user: userWithoutPassword });
   } catch (err) {
     next(err);
@@ -109,7 +218,7 @@ export const getUser = async (req: Request, res: Response, next: NextFunction): 
     });
 
     if (user) {
-      const { password, ...userWithoutPassword } = user;
+      const userWithoutPassword = excludePassword(user);
       res.json(userWithoutPassword);
     } else {
       res.status(404).json({ error: 'User not found' });
@@ -127,13 +236,13 @@ export const updateUser = async (req: Request, res: Response, next: NextFunction
       return;
     }
 
-    const { error, value } = userSchema.validate(req.body, {
+    const { error, value } = updateUserSchema.validate(req.body, {
       abortEarly: false,
-      context: { isUpdate: true }
+      stripUnknown: true
     });
     
     if (error) {
-      res.status(400).json({ error: error.details.map(d => d.message).join(', ') });
+      res.status(400).json({ error: error.details.map((d: any) => d.message).join(', ') });
       return;
     }
 
@@ -193,7 +302,7 @@ export const updateUser = async (req: Request, res: Response, next: NextFunction
     }
 
     if (Object.keys(dataToUpdate).length === 0) {
-      const { password, ...userWithoutPassword } = currentUser;
+      const userWithoutPassword = excludePassword(currentUser);
       res.json({ user: userWithoutPassword, message: "No changes provided." });
       return;
     }
@@ -202,7 +311,7 @@ export const updateUser = async (req: Request, res: Response, next: NextFunction
       where: { id },
       data: dataToUpdate
     });
-    const { password, ...userWithoutPassword } = updatedUser;
+    const userWithoutPassword = excludePassword(updatedUser);
     res.json({ user: userWithoutPassword });
   } catch (err) {
     next(err);

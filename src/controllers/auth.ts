@@ -2,10 +2,20 @@ import { Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcrypt';
 import { PrismaClient } from '@prisma/client';
 import { signAccessToken, signRefreshToken } from '../utils/auth.js';
+import { excludePassword, validatePasswordStrength } from '../utils/passwordSecurity.js';
 import Joi from 'joi';
 import crypto from 'crypto';
 
 const prisma = new PrismaClient();
+
+// Custom password validation function
+const passwordValidation = (value: string, helpers: any) => {
+  const { isValid, errors } = validatePasswordStrength(value);
+  if (!isValid) {
+    return helpers.error('any.custom', { errors });
+  }
+  return value;
+};
 
 const loginSchema = Joi.object({
   username: Joi.string().trim().required().messages({
@@ -18,14 +28,26 @@ const loginSchema = Joi.object({
 const registerSchema = Joi.object({
   username: Joi.string().trim().min(3).max(30).required(),
   email: Joi.string().email().required(),
-  password: Joi.string().min(6).required(),
+  password: Joi.string()
+    .min(6)
+    .required()
+    .custom(passwordValidation)
+    .messages({
+      'any.custom': 'Password validation failed: {{#errors}}'
+    }),
   firstName: Joi.string().trim().max(100).optional(),
   lastName: Joi.string().trim().max(100).optional(),
 });
 
 const changePasswordSchema = Joi.object({
   currentPassword: Joi.string().required(),
-  newPassword: Joi.string().min(6).required(),
+  newPassword: Joi.string()
+    .min(6)
+    .required()
+    .custom(passwordValidation)
+    .messages({
+      'any.custom': 'Password validation failed: {{#errors}}'
+    }),
 });
 
 const forgotPasswordSchema = Joi.object({
@@ -34,7 +56,13 @@ const forgotPasswordSchema = Joi.object({
 
 const resetPasswordSchema = Joi.object({
   token: Joi.string().required(),
-  newPassword: Joi.string().min(6).required(),
+  newPassword: Joi.string()
+    .min(6)
+    .required()
+    .custom(passwordValidation)
+    .messages({
+      'any.custom': 'Password validation failed: {{#errors}}'
+    }),
 });
 
 /**

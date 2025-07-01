@@ -42,7 +42,9 @@ passport.use(new LocalStrategy(
         return done(null, false, { message: 'Invalid credentials' });
       }
 
-      return done(null, user);
+      // Return user without password for security
+      const { password: _, ...userWithoutPassword } = user;
+      return done(null, userWithoutPassword);
     } catch (error) {
       return done(error);
     }
